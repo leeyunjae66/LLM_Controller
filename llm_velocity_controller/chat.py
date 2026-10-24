@@ -6,6 +6,8 @@ Ctrl+D) sends a STOP command first.
 """
 
 import json
+import os
+import signal
 import sys
 import threading
 import time
@@ -102,6 +104,8 @@ class ChatNode(Node):
 
     def __init__(self, printer):
         super().__init__('llm_chat')
+        # Set by the launch file: when velocity_node stops, close this window too.
+        self.declare_parameter('exit_on_controller_shutdown', False)
         self._printer = printer
         self._publisher = self.create_publisher(String, COMMAND_TOPIC, 10)
         self._subscription = self.create_subscription(
@@ -109,8 +113,14 @@ class ChatNode(Node):
 
     def _on_status(self, msg):
         event = parse_status(msg.data)
-        if event is not None:
-            self._printer.print(format_status(event))
+        if event is None:
+            return
+        self._printer.print(format_status(event))
+        if (event['state'] == 'shutdown'
+                and self.get_parameter('exit_on_controller_shutdown').value):
+            self._printer.print('  velocity_node가 종료돼서 chat도 닫아요.')
+            # input() blocks the main thread; interrupt it the same way Ctrl+C does.
+            os.kill(os.getpid(), signal.SIGINT)
 
     def wait_for_controller(self, timeout_sec=DISCOVERY_TIMEOUT_SEC):
         """True once velocity_node subscribes to the command topic."""
