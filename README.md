@@ -22,7 +22,8 @@ Validator가 검증한 뒤 `geometry_msgs/msg/Twist`로 **테스트 토픽 `/llm
 | `prompt.py` | System Prompt, 메시지 구성, Structured Output용 JSON Schema, 로컬 STOP 판별(`is_stop_command`) |
 | `llm_client.py` | `OllamaClient`(표준 라이브러리 `urllib`), 연결/Timeout/응답 오류 예외, 원본 응답 로깅, warm-up. `MockLLMClient`(Ollama 없이 실행용) |
 | `validator.py` | ROS 비의존 순수 Python 검증기. 범위 밖 값은 **보정하지 않고 거부** |
-| `velocity_node.py` | `llm_velocity_controller` 노드. Worker Thread + 10 Hz Timer, generation 카운터 |
+| `velocity_node.py` | `llm_velocity_controller` 노드. Worker Thread + 10 Hz Timer, generation 카운터, 상태 토픽 `/llm/status` |
+| `chat.py` | 터미널 채팅 입력기(`ros2 run llm_velocity_controller chat`). 입력한 문장을 `/llm/user_command`로 보내고 `/llm/status`를 같은 화면에 표시 |
 
 ### JSON 계약과 허용 범위
 
@@ -52,6 +53,26 @@ Validator가 검증한 뒤 `geometry_msgs/msg/Twist`로 **테스트 토픽 `/llm
 - LLM 오류(연결 실패·Timeout·잘못된 응답)와 검증 실패 시 0속도를 발행합니다.
 - 종료(Ctrl+C, SIGINT, SIGTERM) 시 진행 중인 요청을 무효화하고 0속도를 발행합니다.
 - Twist의 `linear.x`, `angular.z` 외 필드는 항상 0입니다.
+- 처리 과정을 `/llm/status`(`std_msgs/String`, JSON 한 줄)로 알립니다.
+
+### 상태 토픽 `/llm/status`
+
+`data`는 JSON 객체 하나이고, `id`는 명령 번호(generation)입니다.
+
+| `state` | 의미 | 추가 필드 |
+|---|---|---|
+| `querying` | 명령을 받아 LLM에 질의 중 | `text` |
+| `stopped` | STOP 키워드, LLM 없이 즉시 정지 | `text` |
+| `executing` | 검증 통과, 속도 발행 시작 | `linear_x`, `angular_z`, `duration` |
+| `done` | 지속시간 종료, 0속도 발행 | |
+| `llm_stop` | LLM이 정지(모두 0)로 해석 | |
+| `rejected` | LLM 오류 또는 검증 실패, 0속도 발행 | `detail` |
+| `stale` | 이전 명령의 늦은 응답이라 무시 | |
+| `shutdown` | 노드 종료, 0속도 발행 | |
+
+```json
+{"id": 1, "state": "executing", "linear_x": 0.2, "angular_z": 0.0, "duration": 1.0}
+```
 
 ### 파라미터
 
@@ -98,6 +119,36 @@ ros2 run llm_velocity_controller velocity_node
 ros2 run llm_velocity_controller velocity_node --ros-args -p llm_backend:=mock
 ```
 
+### 터미널 채팅으로 명령하기 (권장)
+
+노드를 실행한 뒤 다른 터미널에서:
+
+```bash
+ros2 run llm_velocity_controller chat
+```
+
+```text
+> 앞으로 1초 동안 0.2m/s로 이동해
+  [#1] LLM 해석 중...
+  [#1] 실행: 직진 +0.20 m/s, 회전 +0.00 rad/s, 1.0초 동안
+  [#1] 완료 (0속도 발행)
+> 앞으로 10m/s로 가
+  [#2] LLM 해석 중...
+  [#2] 거부됨, 0속도 발행: ValidationError: linear_x 10.0 outside [-0.2, 0.2] m/s
+> 정지
+  [#3] 정지 (LLM 없이 즉시 처리)
+```
+
+- 상태 메시지가 도착해도 입력 중인 글자는 지워지지 않고 프롬프트 아래에 다시 그려집니다.
+  방향키로 줄 편집과 이전 입력 불러오기가 됩니다(readline).
+- 빈 줄은 보내지 않습니다. `exit`, `quit`, `q`, `종료`, Ctrl+C, Ctrl+D로 끝내며, **끝낼 때 정지 명령을 보냅니다.**
+- LLM이 응답하는 동안에도 `정지`를 바로 입력할 수 있습니다.
+- velocity_node가 보이지 않으면 시작할 때 경고를 출력합니다.
+- 파이프 입력도 됩니다: `printf '앞으로 이동해\n' | ros2 run llm_velocity_controller chat`
+  (입력이 끝나면 곧바로 정지를 보내고 종료하므로, 결과를 보려면 입력 뒤에 대기를 넣으세요.)
+
+### 토픽으로 직접 명령하기
+
 다른 터미널에서 명령 발행과 결과 확인:
 
 ```bash
@@ -127,7 +178,8 @@ cd src/llm_velocity_controller && python3 -m pytest -q -p no:cacheprovider test
 |---|---|
 | `test/test_validator.py` | 정상 값·경계값, 파싱 실패, 비객체, 필드 누락/추가/중복, 타입, NaN/Infinity/오버플로, 범위 초과(보정 없음), 음수 duration |
 | `test/test_prompt_and_client.py` | STOP 판별, 프롬프트/스키마 계약, 요청 본문(`stream=false`, `think=false`, `format`, `keep_alive`), Timeout·연결 실패·HTTP 오류·잘못된 응답 본문, warm-up, Mock 클라이언트 |
-| `test/test_velocity_node.py` | 실제 LLM 없이 가짜 LLM·가짜 시계·발행 기록기로 노드 검증: duration 후 0, 즉시 STOP, 느린 추론 중 STOP, 명령 취소, 오래된 응답 폐기, Timeout/잘못된 JSON/범위 초과 시 0, 종료 시 0, 10 Hz 주기, 출력 토픽 고정 |
+| `test/test_velocity_node.py` | 실제 LLM 없이 가짜 LLM·가짜 시계·발행 기록기로 노드 검증: duration 후 0, 즉시 STOP, 느린 추론 중 STOP, 명령 취소, 오래된 응답 폐기, Timeout/잘못된 JSON/범위 초과 시 0, 종료 시 0, 10 Hz 주기, 출력 토픽 고정, 상태 이벤트 순서 |
+| `test/test_chat.py` | 상태 파싱·문구, 종료 단어, 프롬프트 다시 그리기, 그리고 mock LLM 노드와 chat 노드를 실제 ROS 토픽으로 연결한 왕복 테스트 |
 
 노드 테스트는 Timer 콜백을 직접 호출하고 시계를 0.25초씩 진행합니다(이진 부동소수점으로 정확히 표현되어
 경계 판정이 흔들리지 않음). 실제 10 Hz 주기는 Timer 설정값으로 따로 검사합니다.

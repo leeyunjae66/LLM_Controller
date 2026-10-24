@@ -38,6 +38,17 @@ class Recorder:
         self.messages.clear()
 
 
+class StatusRecorder:
+    def __init__(self):
+        self.events = []
+
+    def publish(self, msg):
+        self.events.append(json.loads(msg.data))
+
+    def states(self):
+        return [(e['id'], e['state']) for e in self.events]
+
+
 class FakeLLM:
     """Replies from a script; a reply may be an Exception or a threading.Event gate."""
 
@@ -69,6 +80,7 @@ def harness():
     llm, clock, recorder = FakeLLM(), FakeClock(), Recorder()
     node = VelocityNode(llm_client=llm, clock=clock)
     node._publisher = recorder
+    node._status_publisher = StatusRecorder()
     yield node, llm, clock, recorder
     node.destroy_node()
 
@@ -256,3 +268,62 @@ def test_shutdown_publishes_zero_and_ignores_inflight(harness):
     for _ in range(5):
         tick(node, clock)
     assert rec.values() == [(0.0, 0.0)]
+
+
+# -- status events (consumed by the chat client) ---------------------------------
+
+
+def test_status_sequence_for_successful_command(harness):
+    node, llm, clock, _ = harness
+    llm.script['fwd'] = reply(0.2, 0.0, 1.0)
+    send(node, 'fwd')
+    node.wait_for_workers(5)
+    for _ in range(6):
+        tick(node, clock)
+    status = node._status_publisher
+    assert status.states() == [(1, 'querying'), (1, 'executing'), (1, 'done')]
+    assert status.events[0]['text'] == 'fwd'
+    assert status.events[1] == {'id': 1, 'state': 'executing',
+                                'linear_x': 0.2, 'angular_z': 0.0, 'duration': 1.0}
+
+
+def test_status_for_stop_keyword(harness):
+    node, _, _, _ = harness
+    send(node, '정지해')
+    assert node._status_publisher.events == [{'id': 1, 'state': 'stopped', 'text': '정지해'}]
+
+
+def test_status_for_rejection_includes_reason(harness):
+    node, llm, clock, _ = harness
+    llm.script['fast'] = reply(10.0, 0.0, 1.0)
+    send(node, 'fast')
+    node.wait_for_workers(5)
+    tick(node, clock)
+    event = node._status_publisher.events[-1]
+    assert event['state'] == 'rejected'
+    assert 'ValidationError' in event['detail'] and 'linear_x 10.0' in event['detail']
+
+
+def test_status_for_llm_stop_and_stale(harness):
+    node, llm, clock, _ = harness
+    llm.script['old'] = reply(0.2, 0.0, 1.0)
+    llm.script['sing'] = reply(0.0, 0.0, 0.0)
+    llm.gates['old'] = threading.Event()
+    send(node, 'old')
+    send(node, 'sing')
+    while len(llm.calls) < 2:
+        pass
+    tick(node, clock)                 # 'sing' may or may not be done; release 'old'
+    llm.gates['old'].set()
+    node.wait_for_workers(5)
+    tick(node, clock)
+    states = node._status_publisher.states()
+    assert (2, 'llm_stop') in states
+    assert (1, 'stale') in states
+    assert (1, 'executing') not in states
+
+
+def test_status_on_shutdown(harness):
+    node, _, _, _ = harness
+    node.shutdown()
+    assert node._status_publisher.states() == [(1, 'shutdown')]
