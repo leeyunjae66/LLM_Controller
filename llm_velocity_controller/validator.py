@@ -7,9 +7,9 @@ import json
 import math
 from dataclasses import dataclass
 
-LINEAR_X_LIMIT = 0.2      # m/s, symmetric
+LINEAR_X_LIMIT = 1.0     # m/s, symmetric
 ANGULAR_Z_LIMIT = 0.5     # rad/s, symmetric
-DURATION_MAX = 2.0        # s
+DURATION_MAX = 10.0        # s
 REQUIRED_FIELDS = ('linear_x', 'angular_z', 'duration')
 
 
