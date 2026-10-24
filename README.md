@@ -34,13 +34,18 @@ Validator가 검증한 뒤 `geometry_msgs/msg/Twist`로 **테스트 토픽 `/llm
 
 | 필드 | 범위 | 비고 |
 |---|---|---|
-| `linear_x` | -0.2 ~ 0.2 m/s | 앞(+), 뒤(-) |
+| `linear_x` | -1.0 ~ 1.0 m/s | 앞(+), 뒤(-) |
 | `angular_z` | -0.5 ~ 0.5 rad/s | 왼쪽(+, 반시계), 오른쪽(-) |
-| `duration` | 0 ~ 2.0 s | 음수 거부 |
+| `duration` | 0 ~ 10.0 s | 음수 거부 |
 
 거부 조건: JSON 파싱 실패(코드블록·꼬리 문자열 포함), 객체가 아님, 필드 누락, 추가 필드,
 중복 키, 숫자가 아님(`true/false`, 문자열, `null`), `NaN`/`Infinity`/오버플로, 범위 초과.
-명시되지 않은 값의 기본값: 전후진 0.1 m/s, 회전 0.3 rad/s, 지속시간 1초. 불명확한 명령은 정지(모두 0).
+범위는 `validator.py`의 `LINEAR_X_LIMIT`, `ANGULAR_Z_LIMIT`, `DURATION_MAX`이고, System Prompt에도 이 값이 그대로 들어갑니다.
+
+System Prompt는 단어별 고정값(예: "천천히 = 0.1")을 주지 않고, 명시되지 않은 속도와 시간을 LLM이 명령의 의도에 맞게
+위 범위 안에서 직접 고르게 합니다. 사용자가 숫자를 명시하면 범위를 넘어도 그대로 두고(Validator가 거부),
+불명확하거나 지원하지 않는 명령은 정지(모두 0)로, "계속 가" 같은 무기한 명령은 유한한 시간이나 정지로 답하게 합니다.
+`prompt.py`의 `DEFAULT_*` 값(0.1 m/s, 0.3 rad/s, 5초)은 Ollama 없이 쓰는 `MockLLMClient`에서만 씁니다.
 
 ### 노드 동작
 
@@ -175,7 +180,7 @@ ros2 run llm_velocity_controller chat
   [#1] 완료 (0속도 발행)
 > 앞으로 10m/s로 가
   [#2] LLM 해석 중...
-  [#2] 거부됨, 0속도 발행: ValidationError: linear_x 10.0 outside [-0.2, 0.2] m/s
+  [#2] 거부됨, 0속도 발행: ValidationError: linear_x 10.0 outside [-1.0, 1.0] m/s
 > 정지
   [#3] 정지 (LLM 없이 즉시 처리)
 ```

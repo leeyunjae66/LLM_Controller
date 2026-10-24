@@ -11,9 +11,15 @@ from llm_velocity_controller.llm_client import LLMTimeoutError
 from llm_velocity_controller.llm_client import MockLLMClient
 from llm_velocity_controller.llm_client import OllamaClient
 from llm_velocity_controller.prompt import build_messages
+from llm_velocity_controller.prompt import DEFAULT_ANGULAR_SPEED
+from llm_velocity_controller.prompt import DEFAULT_DURATION
+from llm_velocity_controller.prompt import DEFAULT_LINEAR_SPEED
 from llm_velocity_controller.prompt import is_stop_command
 from llm_velocity_controller.prompt import RESPONSE_SCHEMA
 from llm_velocity_controller.prompt import SYSTEM_PROMPT
+from llm_velocity_controller.validator import ANGULAR_Z_LIMIT
+from llm_velocity_controller.validator import DURATION_MAX
+from llm_velocity_controller.validator import LINEAR_X_LIMIT
 from llm_velocity_controller.validator import validate
 from llm_velocity_controller.validator import ValidationError
 
@@ -34,8 +40,18 @@ def test_messages_and_prompt_contract():
     messages = build_messages('  앞으로 가  ')
     assert messages[0]['role'] == 'system'
     assert messages[1] == {'role': 'user', 'content': '앞으로 가'}
-    for needle in ('JSON', 'Never clamp', '0.1', '0.3', 'linear_x', 'angular_z', 'duration'):
-        assert needle in SYSTEM_PROMPT
+    for needle in ('JSON', 'linear_x', 'angular_z', 'duration',
+                   'Positive is forward', 'Positive is counter-clockwise',
+                   'preserve the requested value exactly', 'Do not silently clamp',
+                   'zero velocities and zero duration', 'indefinite movement'):
+        assert needle in SYSTEM_PROMPT, needle
+    # Limits shown to the LLM come from the validator.
+    assert f'{-LINEAR_X_LIMIT} to {LINEAR_X_LIMIT} m/s' in SYSTEM_PROMPT
+    assert f'{-ANGULAR_Z_LIMIT} to {ANGULAR_Z_LIMIT} rad/s' in SYSTEM_PROMPT
+    assert f'0 to {DURATION_MAX} seconds' in SYSTEM_PROMPT
+    # The prompt lets the LLM choose values itself: no fixed defaults are injected.
+    for default in (DEFAULT_LINEAR_SPEED, DEFAULT_ANGULAR_SPEED, DEFAULT_DURATION):
+        assert str(default) not in SYSTEM_PROMPT, default
     assert RESPONSE_SCHEMA['additionalProperties'] is False
     assert set(RESPONSE_SCHEMA['required']) == {'linear_x', 'angular_z', 'duration'}
 
