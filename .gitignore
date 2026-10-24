@@ -5,3 +5,6 @@ __pycache__/
 build/
 install/
 log/
+# experiment outputs are local; keep the directory itself
+experiments/results/*
+!experiments/results/.gitkeep
