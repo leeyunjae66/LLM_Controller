@@ -93,6 +93,31 @@ class ListPrinter:
         self.lines.append(line)
 
 
+def _status_msg(state):
+    from std_msgs.msg import String
+    return String(data=json.dumps({'id': 5, 'state': state}))
+
+
+@pytest.mark.parametrize('flag, expect_exit', [(False, False), (True, True)])
+def test_chat_closes_on_controller_shutdown_only_when_asked(monkeypatch, flag, expect_exit):
+    from rclpy.parameter import Parameter
+    killed = []
+    monkeypatch.setattr(chat.os, 'kill', lambda pid, sig: killed.append(sig))
+    rclpy.init()
+    try:
+        printer = ListPrinter()
+        node = ChatNode(printer)
+        node.set_parameters([Parameter('exit_on_controller_shutdown', value=flag)])
+        node._on_status(_status_msg('done'))
+        assert killed == []
+        node._on_status(_status_msg('shutdown'))
+        assert (killed == [chat.signal.SIGINT]) is expect_exit
+        assert any('종료' in line for line in printer.lines)
+        node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
 def _wait_for(predicate, timeout=10.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

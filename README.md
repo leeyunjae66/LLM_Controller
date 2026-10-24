@@ -23,6 +23,7 @@ Validator가 검증한 뒤 `geometry_msgs/msg/Twist`로 **테스트 토픽 `/llm
 | `llm_client.py` | `OllamaClient`(표준 라이브러리 `urllib`), 연결/Timeout/응답 오류 예외, 원본 응답 로깅, warm-up. `MockLLMClient`(Ollama 없이 실행용) |
 | `validator.py` | ROS 비의존 순수 Python 검증기. 범위 밖 값은 **보정하지 않고 거부** |
 | `velocity_node.py` | `llm_velocity_controller` 노드. Worker Thread + 10 Hz Timer, generation 카운터, 상태 토픽 `/llm/status` |
+| `launch/llm_velocity_controller.launch.py` | Ollama(필요할 때)·velocity_node·chat 창을 한 번에 실행 |
 | `chat.py` | 터미널 채팅 입력기(`ros2 run llm_velocity_controller chat`). 입력한 문장을 `/llm/user_command`로 보내고 `/llm/status`를 같은 화면에 표시 |
 
 ### JSON 계약과 허용 범위
@@ -113,6 +114,46 @@ source install/setup.bash
 
 ## 실행
 
+### 한 번에 실행하기 (launch)
+
+```bash
+ros2 launch llm_velocity_controller llm_velocity_controller.launch.py
+```
+
+한 명령으로 다음을 모두 띄웁니다.
+
+1. **Ollama**: `api_url`에서 응답이 없으면 `ollama serve`를 직접 시작하고, 3초 뒤 노드를 띄웁니다.
+   이미 실행 중이면 그대로 씁니다. launch가 시작한 Ollama는 launch를 끌 때 같이 꺼집니다.
+2. **velocity_node**: launch를 띄운 터미널에 로그가 나옵니다.
+3. **chat**: **새 터미널 창**(gnome-terminal)이 열리고 그 창에서 명령을 입력합니다.
+   `ros2 launch`는 키보드 입력을 프로세스에 전달하지 않기 때문에 창을 따로 띄웁니다.
+
+종료하는 방법은 두 가지이고, 어느 쪽이든 0속도를 발행한 뒤 전부 꺼집니다.
+- chat 창에서 `exit`를 입력하거나 창을 닫기
+- launch 터미널에서 Ctrl+C (chat 창도 스스로 닫힙니다)
+
+| launch 인자 | 기본값 | 설명 |
+|---|---|---|
+| `llm_backend` | `ollama` | `mock`이면 Ollama 없이 실행 |
+| `model` | `qwen3:4b` | Ollama 모델 |
+| `api_url` | `http://localhost:11434/api/chat` | Ollama 주소 |
+| `timeout_sec` | `30.0` | LLM 요청 Timeout |
+| `keep_alive` | `30m` | 모델 유지 시간 |
+| `log_raw_response` | `true` | LLM 원본 응답 로그 |
+| `start_ollama` | `auto` | `auto`: 응답이 없을 때만 `ollama serve` 시작, `false`: 시작하지 않음 |
+| `chat` | `true` | chat 창 열기 |
+| `chat_terminal` | `gnome-terminal --wait --title=LLM-chat --` | chat 창을 여는 명령. 예: `'terminator -x'` |
+| `shutdown_with_chat` | `true` | chat 창이 닫히면 전체 종료 |
+
+```bash
+# Ollama 없이 동작만 확인
+ros2 launch llm_velocity_controller llm_velocity_controller.launch.py llm_backend:=mock
+# 노드만 띄우고 chat은 직접 실행 (SSH처럼 창을 띄울 수 없는 환경)
+ros2 launch llm_velocity_controller llm_velocity_controller.launch.py chat:=false
+```
+
+### 따로 실행하기
+
 ```bash
 ros2 run llm_velocity_controller velocity_node
 # Ollama 없이:
@@ -121,7 +162,7 @@ ros2 run llm_velocity_controller velocity_node --ros-args -p llm_backend:=mock
 
 ### 터미널 채팅으로 명령하기 (권장)
 
-노드를 실행한 뒤 다른 터미널에서:
+launch를 쓰지 않을 때는 노드를 실행한 뒤 다른 터미널에서:
 
 ```bash
 ros2 run llm_velocity_controller chat
@@ -179,6 +220,7 @@ cd src/llm_velocity_controller && python3 -m pytest -q -p no:cacheprovider test
 | `test/test_validator.py` | 정상 값·경계값, 파싱 실패, 비객체, 필드 누락/추가/중복, 타입, NaN/Infinity/오버플로, 범위 초과(보정 없음), 음수 duration |
 | `test/test_prompt_and_client.py` | STOP 판별, 프롬프트/스키마 계약, 요청 본문(`stream=false`, `think=false`, `format`, `keep_alive`), Timeout·연결 실패·HTTP 오류·잘못된 응답 본문, warm-up, Mock 클라이언트 |
 | `test/test_velocity_node.py` | 실제 LLM 없이 가짜 LLM·가짜 시계·발행 기록기로 노드 검증: duration 후 0, 즉시 STOP, 느린 추론 중 STOP, 명령 취소, 오래된 응답 폐기, Timeout/잘못된 JSON/범위 초과 시 0, 종료 시 0, 10 Hz 주기, 출력 토픽 고정, 상태 이벤트 순서 |
+| `test/test_launch.py` | launch 인자 선언, Ollama 재사용·자동 시작·`start_ollama:=false`, chat 창 prefix와 종료 연동, mock 백엔드 구성 |
 | `test/test_chat.py` | 상태 파싱·문구, 종료 단어, 프롬프트 다시 그리기, 그리고 mock LLM 노드와 chat 노드를 실제 ROS 토픽으로 연결한 왕복 테스트 |
 
 노드 테스트는 Timer 콜백을 직접 호출하고 시계를 0.25초씩 진행합니다(이진 부동소수점으로 정확히 표현되어
