@@ -21,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'velocity_node = llm_velocity_controller.velocity_node:main',
+            'chat = llm_velocity_controller.chat:main',
         ],
     },
 )

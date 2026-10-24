@@ -9,8 +9,11 @@ Threading model
   slow, stale reply can never override a newer command.
 - A new command and any STOP are handled in the subscription callback without
   waiting for inference: the active motion is cleared and zero is published.
+- Progress is reported on STATUS_TOPIC as one JSON object per event (see
+  STATUS_STATES), so a client such as `chat` can show what happened.
 """
 
+import json
 import queue
 import signal
 import threading
@@ -34,7 +37,20 @@ from llm_velocity_controller.validator import validate
 COMMAND_TOPIC = '/llm/user_command'
 # Fixed on purpose: this package must never drive the real /cmd_vel.
 OUTPUT_TOPIC = '/llm/cmd_vel_test'
+STATUS_TOPIC = '/llm/status'
 PUBLISH_PERIOD_SEC = 0.1
+
+# Every event published on STATUS_TOPIC carries one of these in "state".
+STATUS_STATES = (
+    'querying',   # command accepted, waiting for the LLM        (+ text)
+    'stopped',    # STOP keyword, handled without the LLM        (+ text)
+    'executing',  # validated, now publishing the velocity       (+ linear_x, angular_z, duration)
+    'done',       # duration elapsed, zero published
+    'llm_stop',   # LLM answered with an all-zero command
+    'rejected',   # LLM failure or validation error, zero published (+ detail)
+    'stale',      # late reply for an older command, ignored
+    'shutdown',   # node stopping, zero published
+)
 
 
 def make_twist(linear_x=0.0, angular_z=0.0):
@@ -60,12 +76,13 @@ class VelocityNode(Node):
         self._monotonic = clock
         self._lock = threading.Lock()
         self._generation = 0
-        self._active = None          # (VelocityCommand, end_time) or None
+        self._active = None          # (VelocityCommand, end_time, generation) or None
         self._results = queue.SimpleQueue()
         self._workers = []
         self._llm = llm_client or self._create_client()
 
         self._publisher = self.create_publisher(Twist, OUTPUT_TOPIC, 10)
+        self._status_publisher = self.create_publisher(String, STATUS_TOPIC, 20)
         self._subscription = self.create_subscription(
             String, COMMAND_TOPIC, self._on_user_command, 10)
         self._timer = self.create_timer(PUBLISH_PERIOD_SEC, self._on_timer)
@@ -107,6 +124,10 @@ class VelocityNode(Node):
     def publish_zero(self):
         self._publisher.publish(make_twist())
 
+    def _publish_status(self, generation, state, **fields):
+        payload = {'id': generation, 'state': state, **fields}
+        self._status_publisher.publish(String(data=json.dumps(payload, ensure_ascii=False)))
+
     def _cancel_active(self):
         """Invalidate in-flight requests and the running motion; returns new generation."""
         with self._lock:
@@ -122,8 +143,10 @@ class VelocityNode(Node):
         self.publish_zero()
         if is_stop_command(text):
             self.get_logger().info(f'STOP: {text!r} (handled without LLM)')
+            self._publish_status(generation, 'stopped', text=text)
             return
         self.get_logger().info(f'command #{generation}: {text!r} -> querying LLM')
+        self._publish_status(generation, 'querying', text=text)
         worker = threading.Thread(
             target=self._run_llm, args=(generation, text),
             name=f'llm-request-{generation}', daemon=True)
@@ -146,12 +169,13 @@ class VelocityNode(Node):
                 self._active = None
         if active is None:
             return
-        command, end_time = active
+        command, end_time, generation = active
         if now < end_time:
             self._publisher.publish(make_twist(command.linear_x, command.angular_z))
         else:
             self.publish_zero()
             self.get_logger().info('duration elapsed, published zero velocity')
+            self._publish_status(generation, 'done')
 
     def _apply_results(self, now):
         while True:
@@ -165,22 +189,29 @@ class VelocityNode(Node):
                 started = (not stale and error is None and command.duration > 0.0
                            and not command.is_stop)
                 if not stale:
-                    self._active = (command, now + command.duration) if started else None
+                    self._active = ((command, now + command.duration, generation)
+                                    if started else None)
             if stale:
                 self.get_logger().warn(
                     f'discarded stale LLM result #{generation} (latest is #{latest})')
+                self._publish_status(generation, 'stale')
             elif error is not None:
                 self.publish_zero()
                 self.get_logger().error(
                     f'command #{generation} rejected ({type(error).__name__}: {error}); '
                     'published zero velocity')
+                self._publish_status(generation, 'rejected',
+                                     detail=f'{type(error).__name__}: {error}')
             elif not started:
                 self.publish_zero()
                 self.get_logger().info(f'command #{generation}: LLM returned stop')
+                self._publish_status(generation, 'llm_stop')
             else:
                 self.get_logger().info(
                     f'command #{generation}: linear_x={command.linear_x} '
                     f'angular_z={command.angular_z} duration={command.duration}')
+                self._publish_status(generation, 'executing', linear_x=command.linear_x,
+                                     angular_z=command.angular_z, duration=command.duration)
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -190,8 +221,9 @@ class VelocityNode(Node):
 
     def shutdown(self):
         """Stop motion, ignore in-flight replies and publish zero."""
-        self._cancel_active()
+        generation = self._cancel_active()
         self.publish_zero()
+        self._publish_status(generation, 'shutdown')
 
 
 def _raise_keyboard_interrupt(signum, frame):
