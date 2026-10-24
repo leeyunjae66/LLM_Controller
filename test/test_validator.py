@@ -3,6 +3,9 @@ import math
 
 import pytest
 
+from llm_velocity_controller.validator import ANGULAR_Z_LIMIT
+from llm_velocity_controller.validator import DURATION_MAX
+from llm_velocity_controller.validator import LINEAR_X_LIMIT
 from llm_velocity_controller.validator import validate
 from llm_velocity_controller.validator import validate_dict
 from llm_velocity_controller.validator import ValidationError
@@ -19,9 +22,11 @@ def _json(**fields):
     (_json(linear_x=0, angular_z=0.3, duration=1), (0.0, 0.3, 1.0)),
     (_json(linear_x=0, angular_z=-0.3, duration=2), (0.0, -0.3, 2.0)),
     (_json(linear_x=0, angular_z=0, duration=0), (0.0, 0.0, 0.0)),
-    # inclusive boundaries
-    (_json(linear_x=-0.2, angular_z=0.5, duration=2.0), (-0.2, 0.5, 2.0)),
-    (_json(linear_x=0.2, angular_z=-0.5, duration=0.0), (0.2, -0.5, 0.0)),
+    # inclusive boundaries, taken from the validator's limits
+    (_json(linear_x=-LINEAR_X_LIMIT, angular_z=ANGULAR_Z_LIMIT, duration=DURATION_MAX),
+     (-LINEAR_X_LIMIT, ANGULAR_Z_LIMIT, DURATION_MAX)),
+    (_json(linear_x=LINEAR_X_LIMIT, angular_z=-ANGULAR_Z_LIMIT, duration=0.0),
+     (LINEAR_X_LIMIT, -ANGULAR_Z_LIMIT, 0.0)),
 ])
 def test_accepts_valid_commands(text, expected):
     command = validate(text)
@@ -111,11 +116,11 @@ def test_rejects_overflowing_number():
 
 @pytest.mark.parametrize('fields, message', [
     ({'linear_x': 10.0, 'angular_z': 0, 'duration': 1}, 'linear_x'),    # 앞으로 10m/s
-    ({'linear_x': 0.2000001, 'angular_z': 0, 'duration': 1}, 'linear_x'),
-    ({'linear_x': -0.3, 'angular_z': 0, 'duration': 1}, 'linear_x'),
-    ({'linear_x': 0, 'angular_z': 0.51, 'duration': 1}, 'angular_z'),
-    ({'linear_x': 0, 'angular_z': -1.0, 'duration': 1}, 'angular_z'),
-    ({'linear_x': 0.1, 'angular_z': 0, 'duration': 2.01}, 'duration'),
+    ({'linear_x': LINEAR_X_LIMIT + 1e-7, 'angular_z': 0, 'duration': 1}, 'linear_x'),
+    ({'linear_x': -(LINEAR_X_LIMIT + 0.1), 'angular_z': 0, 'duration': 1}, 'linear_x'),
+    ({'linear_x': 0, 'angular_z': ANGULAR_Z_LIMIT + 0.01, 'duration': 1}, 'angular_z'),
+    ({'linear_x': 0, 'angular_z': -2 * ANGULAR_Z_LIMIT, 'duration': 1}, 'angular_z'),
+    ({'linear_x': 0.1, 'angular_z': 0, 'duration': DURATION_MAX + 0.01}, 'duration'),
     ({'linear_x': 0.1, 'angular_z': 0, 'duration': 60}, 'duration'),
 ])
 def test_rejects_out_of_range_without_clamping(fields, message):
