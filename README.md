@@ -1,8 +1,8 @@
 # llm_velocity_controller
 
 자연어 이동 명령을 로컬 LLM(Ollama + `qwen3:4b`)이 JSON 속도 명령으로 바꾸고,
-Validator가 검증한 뒤 `geometry_msgs/msg/Twist`로 **테스트 토픽 `/llm/cmd_vel_test`에만**
-발행하는 ROS 2 Humble 패키지입니다. 실제 `/cmd_vel`에는 절대 발행하지 않습니다(토픽 이름이 코드에 고정).
+Validator가 검증한 뒤 `geometry_msgs/msg/Twist`로 **`/cmd_vel`**에
+발행하는 ROS 2 Humble 패키지입니다. 로봇이 다른 토픽을 구독하면 remap합니다(예: RUBI는 `/rubi_gazebo/cmd_vel`).
 
 ```text
 /llm/user_command (std_msgs/String)
@@ -12,7 +12,7 @@ Validator가 검증한 뒤 `geometry_msgs/msg/Twist`로 **테스트 토픽 `/llm
    └─ Worker Thread: prompt.py → llm_client.py (Ollama /api/chat) → validator.py
                                           │ (generation, 결과|오류) 큐
                                           ▼
-                     10 Hz ROS Timer ──► /llm/cmd_vel_test (geometry_msgs/Twist)
+                     10 Hz ROS Timer ──► /cmd_vel (geometry_msgs/Twist)
 ```
 
 ## 모듈
@@ -149,12 +149,15 @@ ros2 launch llm_velocity_controller llm_velocity_controller.launch.py
 | `chat` | `true` | chat 창 열기 |
 | `chat_terminal` | `gnome-terminal --wait --title=LLM-chat --` | chat 창을 여는 명령. 예: `'terminator -x'` |
 | `shutdown_with_chat` | `true` | chat 창이 닫히면 전체 종료 |
+| `cmd_vel_topic` | `/cmd_vel` | 속도 출력 토픽 remap (RUBI: `/rubi_gazebo/cmd_vel`) |
 
 ```bash
 # Ollama 없이 동작만 확인
 ros2 launch llm_velocity_controller llm_velocity_controller.launch.py llm_backend:=mock
 # 노드만 띄우고 chat은 직접 실행 (SSH처럼 창을 띄울 수 없는 환경)
 ros2 launch llm_velocity_controller llm_velocity_controller.launch.py chat:=false
+# RUBI Gazebo 구동
+ros2 launch llm_velocity_controller llm_velocity_controller.launch.py cmd_vel_topic:=/rubi_gazebo/cmd_vel
 ```
 
 ### 따로 실행하기
@@ -199,7 +202,7 @@ ros2 run llm_velocity_controller chat
 
 ```bash
 ros2 topic pub --once /llm/user_command std_msgs/msg/String "{data: '앞으로 1초 동안 0.2m/s로 이동해'}"
-ros2 topic echo /llm/cmd_vel_test
+ros2 topic echo /cmd_vel
 ```
 
 `linear.x: 0.2`가 약 1초(10 Hz로 10개) 나온 뒤 0이 한 번 발행됩니다.

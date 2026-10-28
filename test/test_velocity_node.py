@@ -104,8 +104,8 @@ def assert_other_fields_zero(recorder):
         assert (m.linear.y, m.linear.z, m.angular.x, m.angular.y) == (0.0, 0.0, 0.0, 0.0)
 
 
-def test_output_topic_is_test_topic_only():
-    assert OUTPUT_TOPIC == '/llm/cmd_vel_test'
+def test_output_topic_is_cmd_vel():
+    assert OUTPUT_TOPIC == '/cmd_vel'
 
 
 def test_timer_runs_at_10_hz(harness):

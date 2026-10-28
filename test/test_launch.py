@@ -120,3 +120,21 @@ def test_invalid_start_ollama_value_is_rejected(launch_module, monkeypatch):
     monkeypatch.setattr(launch_module, 'ollama_running', lambda url: False)
     with pytest.raises(ValueError, match='start_ollama'):
         launch_module._launch_setup(_context(launch_module, start_ollama='yes'))
+
+
+def _remappings(actions):
+    node = [a for a in actions if isinstance(a, Node) and a.node_executable == 'velocity_node'][0]
+    return [(''.join(p.perform(LaunchContext()) for p in src),
+             ''.join(p.perform(LaunchContext()) for p in dst))
+            for src, dst in node._Node__remappings]
+
+
+def test_cmd_vel_goes_to_cmd_vel_by_default(launch_module):
+    actions = launch_module._launch_setup(_context(launch_module, llm_backend='mock'))
+    assert _remappings(actions) == [('/cmd_vel', '/cmd_vel')]
+
+
+def test_cmd_vel_topic_can_be_remapped(launch_module):
+    actions = launch_module._launch_setup(
+        _context(launch_module, llm_backend='mock', cmd_vel_topic='/rubi_gazebo/cmd_vel'))
+    assert _remappings(actions) == [('/cmd_vel', '/rubi_gazebo/cmd_vel')]
