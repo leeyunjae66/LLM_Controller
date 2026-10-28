@@ -35,8 +35,8 @@ from llm_velocity_controller.prompt import is_stop_command
 from llm_velocity_controller.validator import validate
 
 COMMAND_TOPIC = '/llm/user_command'
-# Fixed on purpose: this package must never drive the real /cmd_vel.
-OUTPUT_TOPIC = '/llm/cmd_vel_test'
+# Remap /cmd_vel to reach a robot under a namespace, e.g. /rubi_gazebo/cmd_vel.
+OUTPUT_TOPIC = '/cmd_vel'
 STATUS_TOPIC = '/llm/status'
 PUBLISH_PERIOD_SEC = 0.1
 

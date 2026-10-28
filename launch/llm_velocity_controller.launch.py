@@ -8,6 +8,7 @@ is true.
     ros2 launch llm_velocity_controller llm_velocity_controller.launch.py
     ros2 launch llm_velocity_controller llm_velocity_controller.launch.py llm_backend:=mock
     ros2 launch llm_velocity_controller llm_velocity_controller.launch.py chat:=false
+    ros2 launch llm_velocity_controller llm_velocity_controller.launch.py cmd_vel_topic:=/rubi_gazebo/cmd_vel
 """
 
 import shutil
@@ -45,6 +46,8 @@ ARGUMENTS = (
     ('chat_terminal', DEFAULT_CHAT_TERMINAL,
      "command prefix that opens a terminal, e.g. 'terminator -x'"),
     ('shutdown_with_chat', 'true', 'stop everything when the chat window closes'),
+    ('cmd_vel_topic', '/cmd_vel',
+     "where velocity_node's /cmd_vel goes, e.g. '/rubi_gazebo/cmd_vel'"),
 )
 
 
@@ -112,7 +115,8 @@ def _launch_setup(context):
             'timeout_sec': float(arg('timeout_sec')),
             'keep_alive': arg('keep_alive'),
             'log_raw_response': as_bool(arg('log_raw_response')),
-        }])
+        }],
+        remappings=[('/cmd_vel', arg('cmd_vel_topic'))])
     # Give a freshly started server a moment so the node's warm-up can connect.
     actions.append(TimerAction(period=OLLAMA_STARTUP_DELAY_SEC, actions=[controller])
                    if ollama_started else controller)
